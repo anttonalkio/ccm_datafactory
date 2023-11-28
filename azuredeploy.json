@@ -8,31 +8,6 @@
                 "description": "The EA Enrollment ID"
             }
         },
-       "ServicePrincipalId": {
-            "type": "string",
-            "metadata": {
-                "description": "The ID of the service principal used to connect to the management API"
-            }
-        },
-        "ServicePrincipalSecret": {
-            "type": "securestring",
-            "metadata": {
-                "description": "The name of the keyvault secret which contains the Service Principal password"
-            }
-        },
-        "ServicePrincipalTenantId": {
-            "type": "string",
-            "metadata": {
-                "description": "The ID of the AAD Tenant containing the service principal"
-            }
-        },
-        "aadResourceId": {
-            "type": "string",
-            "defaultValue": "[parameters('managementApiUri')]",
-            "metadata": {
-                "description": "The AAD Resource ID for the Azure Management API"
-            }
-        },
         "BlobContainerName": {
             "type": "string",
             "defaultValue": "[concat('ccm', uniqueString(resourceGroup().id, resourceGroup().location))]",
@@ -45,13 +20,6 @@
             "defaultValue": "[concat('datafactory', uniqueString(resourceGroup().id, resourceGroup().location))]",
             "metadata": {
                 "description": "Data Factory Name"
-            }
-        },
-        "KeyvaultName": {
-            "type": "string",
-            "defaultValue": "[concat('keyvault', uniqueString(resourceGroup().id, resourceGroup().location))]",
-            "metadata": {
-                "description": "The URI of the Azure Keyvault instance which keeps the service principal secret secret"
             }
         },
         "ManagementApiUri": {
@@ -72,12 +40,25 @@
     "variables": {
         "dataFactoryId": "[concat('Microsoft.DataFactory/factories/', parameters('DataFactoryName'))]",
         "datalakeUri": "[concat('https://', parameters('storageAccountName'), '.dfs.core.windows.net')]",
-        "enterpriseReader": "[concat('svc-ea-reader-', uniqueString(resourceGroup().id, resourceGroup().location))]",
-        "keyvaultUri": "[concat('https://', parameters('KeyvaultName') ,'.vault.azure.net/')]",
-        "keyvaultSecretUri": "[concat('https://', parameters('KeyvaultName') ,'.vault.azure.net/secrets/', variables('enterpriseReader'), '?api-version=7.0')]",
+        "storageBlobDataContributorRoleDefinitionId": "ba92f5b4-2d11-453d-a403-e96b0029c9fe",
         "storageAccountId": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]"
     },
     "resources": [
+        {
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2020-10-01-preview",
+            "name": "[guid(resourceGroup().id, variables('storageBlobDataContributorRoleDefinitionId'), 'adf-msi')]",
+            "scope": "[resourceId('Microsoft.DataFactory/factories', parameters('DataFactoryName'))]",
+            "properties": {
+                "principalType": "ServicePrincipal",
+                "principalId": "[reference(concat('Microsoft.DataFactory/factories/', parameters('DataFactoryName')), '2018-06-01', 'Full').identity.principalId]",
+                "roleDefinitionId": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Authorization/roleDefinitions/', variables('storageBlobDataContributorRoleDefinitionId'))]"
+            },
+            "dependsOn": [
+                "[resourceId('Microsoft.DataFactory/factories/', parameters('DataFactoryName'))]",
+                "[resourceId('Microsoft.Storage/storageAccounts/', parameters('storageAccountName'))]"
+            ]
+        },
         {
             "type": "Microsoft.Storage/storageAccounts",
             "apiVersion": "2019-06-01",
@@ -104,64 +85,6 @@
             ]
         },
         {
-            "name": "[parameters('KeyvaultName')]",
-            "type": "Microsoft.KeyVault/vaults",
-            "apiVersion": "2019-09-01",
-            "location": "[resourceGroup().location]",
-            "tags": {
-                "displayName": "[parameters('KeyvaultName')]"
-            },
-            "dependsOn": [
-                "[resourceId('Microsoft.DataFactory/factories', parameters('DataFactoryName'))]"
-            ],
-            "properties": {
-                "enabledForDeployment": true,
-                "enabledForTemplateDeployment": true,
-                "enabledForDiskEncryption": true,
-                "tenantId": "[subscription().tenantId]",
-                "accessPolicies": [
-                    {
-                        "tenantId": "[reference(resourceId('Microsoft.DataFactory/factories', parameters('DataFactoryName')), '2018-06-01', 'Full').identity.tenantId]",
-                        "objectId": "[reference(resourceId('Microsoft.DataFactory/factories', parameters('DataFactoryName')), '2018-06-01', 'Full').identity.principalId]",
-                        "permissions": {
-                            "secrets": [
-                                "Get"
-                            ]
-                        }
-                    }
-                ],
-                "sku": {
-                    "name": "standard",
-                    "family": "A"
-                }
-            },
-            "resources": [
-            ]
-        },
-        {
-            "name": "[concat( parameters('KeyvaultName'), '/', parameters('StorageAccountName'))]",
-            "type": "Microsoft.KeyVault/vaults/secrets",
-            "apiVersion": "2019-09-01",
-            "properties": {
-                "value": "[listKeys(variables('storageAccountId'), '2019-06-01').keys[0].value]"
-            },
-            "dependsOn": [
-                "[resourceId('Microsoft.KeyVault/vaults', parameters('KeyvaultName'))]",
-                "[resourceId('Microsoft.Storage/storageAccounts', parameters('StorageAccountName'))]"
-            ]
-        },
-        {
-            "name": "[concat( parameters('KeyvaultName'), '/', variables('enterpriseReader'))]",
-            "type": "Microsoft.KeyVault/vaults/secrets",
-            "apiVersion": "2019-09-01",
-            "properties": {
-                "value": "[parameters('ServicePrincipalSecret')]"
-            },
-            "dependsOn": [
-                "[resourceId('Microsoft.KeyVault/vaults', parameters('KeyvaultName'))]"
-            ]
-        },
-        {
             "name": "[concat(parameters('DataFactoryName'), '/azurerm')]",
             "type": "Microsoft.DataFactory/factories/linkedservices",
             "apiVersion": "2018-06-01",
@@ -169,25 +92,12 @@
                 "annotations": [],
                 "type": "RestService",
                 "typeProperties": {
-                    "url": "[parameters('ManagementApiUri')]",
+                    "url": "https://management.azure.com",
                     "enableServerCertificateValidation": true,
-                    "authenticationType": "AadServicePrincipal",
-                    "servicePrincipalId": "[parameters('ServicePrincipalId')]",
-                    "servicePrincipalKey": {
-                        "type": "AzureKeyVaultSecret",
-                        "store": {
-                            "referenceName": "ccmkeyvault",
-                            "type": "LinkedServiceReference"
-                        },
-                        "secretName": "[variables('enterpriseReader')]"
-                    },
-                    "tenant": "[parameters('ServicePrincipalTenantId')]",
-                    "aadResourceId": "[parameters('ManagementApiUri')]"
+                    "authenticationType": "ManagedServiceIdentity",
+                    "aadResourceId": "https://management.azure.com"
                 }
-            },
-            "dependsOn": [
-                "[concat(variables('dataFactoryId'), '/linkedServices/ccmkeyvault')]"
-            ]
+            }
         },
         {
             "name": "[concat(parameters('DataFactoryName'), '/ccmdatalake')]",
@@ -197,35 +107,9 @@
                 "annotations": [],
                 "type": "AzureBlobFS",
                 "typeProperties": {
-                    "url": "[variables('datalakeUri')]",
-                    "accountKey": {
-                        "type": "AzureKeyVaultSecret",
-                        "store": {
-                            "referenceName": "ccmkeyvault",
-                            "type": "LinkedServiceReference"
-                        },
-                        "secretName": "[parameters('StorageAccountName')]"
-                    }
+                    "url": "[variables('datalakeUri')]"
                 }
-            },
-            "dependsOn": [
-                "[concat(variables('dataFactoryId'), '/linkedServices/ccmkeyvault')]"
-            ]
-        },
-        {
-            "name": "[concat(parameters('DataFactoryName'), '/ccmkeyvault')]",
-            "type": "Microsoft.DataFactory/factories/linkedServices",
-            "apiVersion": "2018-06-01",
-            "properties": {
-                "annotations": [],
-                "type": "AzureKeyVault",
-                "typeProperties": {
-                    "baseUrl": "[variables('keyvaultUri')]"
-                }
-            },
-            "dependsOn": [
-                "[variables('dataFactoryId')]"
-            ]
+            }
         },
         {
             "name": "[concat(parameters('DataFactoryName'), '/ccmreportstorage')]",
@@ -254,24 +138,24 @@
             "type": "Microsoft.DataFactory/factories/datasets",
             "apiVersion": "2018-06-01",
             "properties": {
-                    "linkedServiceName": {
-                        "referenceName": "azurerm",
-                        "type": "LinkedServiceReference"
-                    },
-                    "parameters": {
-                        "RelativeUrl": {
-                            "type": "string"
-                        }
-                    },
-                    "annotations": [],
-                    "type": "RestResource",
-                    "typeProperties": {
-                        "relativeUrl": {
-                            "value": "@dataset().RelativeUrl",
-                            "type": "Expression"
-                        }
-                    },
-                    "schema": []
+                "linkedServiceName": {
+                    "referenceName": "azurerm",
+                    "type": "LinkedServiceReference"
+                },
+                "parameters": {
+                    "RelativeUrl": {
+                        "type": "string"
+                    }
+                },
+                "annotations": [],
+                "type": "RestResource",
+                "typeProperties": {
+                    "relativeUrl": {
+                        "value": "@dataset().RelativeUrl",
+                        "type": "Expression"
+                    }
+                },
+                "schema": []
             },
             "dependsOn": [
                 "[concat(variables('dataFactoryId'), '/linkedServices/azurerm')]"
@@ -824,21 +708,9 @@
                 ],
                 "concurrency": 1,
                 "parameters": {
-                    "TenantId": {
-                        "type": "string",
-                        "defaultValue": "[parameters('ServicePrincipalTenantId')]"
-                    },
-                    "ClientId": {
-                        "type": "string",
-                        "defaultValue": "[parameters('ServicePrincipalId')]"
-                    },
                     "EnrollmentId": {
                         "type": "string",
                         "defaultValue": "[parameters('EnrollmentId')]"
-                    },
-                    "ClientSecret": {
-                        "type": "string",
-                        "defaultValue": "[variables('keyvaultSecretUri')]"
                     },
                     "NumberOfMonths": {
                         "type": "string",
@@ -864,8 +736,7 @@
             "dependsOn": [
                 "[concat(variables('dataFactoryId'), '/datasets/ccmreportstorage')]",
                 "[concat(variables('dataFactoryId'), '/datasets/ccmdatalake_csv')]",
-                "[concat(variables('dataFactoryId'), '/datasets/ccmdatalake_gz')]",
-                "[concat(variables('dataFactoryId'), '/linkedServices/ccmkeyvault')]"
+                "[concat(variables('dataFactoryId'), '/datasets/ccmdatalake_gz')]"
             ]
         },
         {
@@ -1516,20 +1387,8 @@
                             },
                             "waitOnCompletion": true,
                             "parameters": {
-                                "TenantId": {
-                                    "value": "@pipeline().parameters.TenantId",
-                                    "type": "Expression"
-                                },
-                                "ClientId": {
-                                    "value": "@pipeline().parameters.ClientId",
-                                    "type": "Expression"
-                                },
                                 "EnrollmentId": {
                                     "value": "@pipeline().parameters.EnrollmentId",
-                                    "type": "Expression"
-                                },
-                                "ClientSecret": {
-                                    "value": "@pipeline().parameters.ClientSecret",
                                     "type": "Expression"
                                 }
                             }
@@ -2878,25 +2737,13 @@
                                 "type": "PipelineReference"
                             },
                             "waitOnCompletion": true,
-                                    "parameters": {
-                                        "TenantId": {
-                                            "value": "@pipeline().parameters.TenantId",
-                                            "type": "Expression"
-                                        },
-                                        "ClientId": {
-                                            "value": "@pipeline().parameters.ClientSecret",
-                                            "type": "Expression"
-                                        },
-                                        "EnrollmentId": {
-                                            "value": "@pipeline().parameters.EnrollmentId",
-                                            "type": "Expression"
-                                        },
-                                        "ClientSecret": {
-                                            "value": "@pipeline().parameters.ClientSecret",
-                                            "type": "Expression"
-                                        },
-                                        "NumberOfMonths": "2"
-                                    }
+                            "parameters": {
+                                "EnrollmentId": {
+                                    "value": "@pipeline().parameters.EnrollmentId",
+                                    "type": "Expression"
+                                },
+                                "NumberOfMonths": "2"
+                            }
                         }
                     },
                     {
@@ -3083,21 +2930,9 @@
                     }
                 ],
                 "parameters": {
-                    "TenantId": {
-                        "type": "string",
-                        "defaultValue": "[parameters('ServicePrincipalTenantId')]"
-                    },
-                    "ClientId": {
-                        "type": "string",
-                        "defaultValue": "[parameters('ServicePrincipalId')]"
-                    },
                     "EnrollmentId": {
                         "type": "string",
                         "defaultValue": "[parameters('EnrollmentId')]"
-                    },
-                    "ClientSecret": {
-                        "type": "string",
-                        "defaultValue": "[variables('keyvaultSecretUri')]"
                     },
                     "UsageDate": {
                         "type": "string",
@@ -3122,50 +2957,9 @@
                 "description": "Downloads the current pricesheet for the enrollment",
                 "activities": [
                     {
-                        "name": "Login",
-                        "type": "WebActivity",
-                        "dependsOn": [
-                            {
-                                "activity": "GetClientSecret",
-                                "dependencyConditions": [
-                                    "Succeeded"
-                                ]
-                            }
-                        ],
-                        "policy": {
-                            "timeout": "0.00:10:00",
-                            "retry": 0,
-                            "retryIntervalInSeconds": 30,
-                            "secureOutput": true,
-                            "secureInput": true
-                        },
-                        "userProperties": [],
-                        "typeProperties": {
-                            "url": {
-                                "value": "https://login.microsoftonline.com/@{pipeline().parameters.TenantId}/oauth2/v2.0/token",
-                                "type": "Expression"
-                            },
-                            "method": "POST",
-                            "headers": {
-                                "Content-Type": "application/x-www-form-urlencoded"
-                            },
-                            "body": {
-                                "value": "client_id=@{pipeline().parameters.ClientId}&scope=https%3A%2F%2Fmanagement.azure.com%2F.default&client_secret=@{activity('GetClientSecret').output.value}&grant_type=client_credentials",
-                                "type": "Expression"
-                            }
-                        }
-                    },
-                    {
                         "name": "GetUrl",
                         "type": "WebActivity",
-                        "dependsOn": [
-                            {
-                                "activity": "Login",
-                                "dependencyConditions": [
-                                    "Succeeded"
-                                ]
-                            }
-                        ],
+                        "dependsOn": [],
                         "policy": {
                             "timeout": "0.00:10:00",
                             "retry": 10,
@@ -3180,11 +2974,9 @@
                                 "type": "Expression"
                             },
                             "method": "GET",
-                            "headers": {
-                                "Authorization": {
-                                    "value": "Bearer @{activity('Login').output.access_token}",
-                                    "type": "Expression"
-                                }
+                            "authentication": {
+                                "type": "MSI",
+                                "resource": "https://management.azure.com/"
                             }
                         }
                     },
@@ -3269,30 +3061,6 @@
                         ]
                     },
                     {
-                        "name": "GetClientSecret",
-                        "type": "WebActivity",
-                        "dependsOn": [],
-                        "policy": {
-                            "timeout": "0.00:10:00",
-                            "retry": 0,
-                            "retryIntervalInSeconds": 30,
-                            "secureOutput": true,
-                            "secureInput": true
-                        },
-                        "userProperties": [],
-                        "typeProperties": {
-                            "url": {
-                                "value": "@pipeline().parameters.ClientSecret",
-                                "type": "Expression"
-                            },
-                            "method": "GET",
-                            "authentication": {
-                                "type": "MSI",
-                                "resource": "https://vault.azure.net"
-                            }
-                        }
-                    },
-                    {
                         "name": "DeleteFile",
                         "type": "Delete",
                         "dependsOn": [
@@ -3374,21 +3142,9 @@
                     }
                 ],
                 "parameters": {
-                    "TenantId": {
-                        "type": "string",
-                        "defaultValue": "[parameters('ServicePrincipalTenantId')]"
-                    },
-                    "ClientId": {
-                        "type": "string",
-                        "defaultValue": "[parameters('ServicePrincipalId')]"
-                    },
                     "EnrollmentId": {
                         "type": "string",
                         "defaultValue": "[parameters('EnrollmentId')]"
-                    },
-                    "ClientSecret": {
-                        "type": "string",
-                        "defaultValue": "[variables('keyvaultSecretUri')]"
                     }
                 },
                 "annotations": []
@@ -3396,8 +3152,7 @@
             "dependsOn": [
                 "[concat(variables('dataFactoryId'), '/datasets/ccmreportstorage')]",
                 "[concat(variables('dataFactoryId'), '/datasets/ccmdatalake_csv')]",
-                "[concat(variables('dataFactoryId'), '/datasets/ccmdatalake_gz')]",
-                "[concat(variables('dataFactoryId'), '/linkedServices/ccmkeyvault')]"
+                "[concat(variables('dataFactoryId'), '/datasets/ccmdatalake_gz')]"
             ]
         },
         {
@@ -3408,51 +3163,10 @@
                 "description": "Downloads a day's worth of usage data - Actual or Amortized per the parameter",
                 "activities": [
                     {
-                        "name": "Login",
-                        "type": "WebActivity",
-                        "dependsOn": [
-                            {
-                                "activity": "GetClientSecret",
-                                "dependencyConditions": [
-                                    "Succeeded"
-                                ]
-                            }
-                        ],
-                        "policy": {
-                            "timeout": "0.00:10:00",
-                            "retry": 0,
-                            "retryIntervalInSeconds": 30,
-                            "secureOutput": true,
-                            "secureInput": true
-                        },
-                        "userProperties": [],
-                        "typeProperties": {
-                            "url": {
-                                "value": "https://login.microsoftonline.com/@{pipeline().parameters.TenantId}/oauth2/v2.0/token",
-                                "type": "Expression"
-                            },
-                            "method": "POST",
-                            "headers": {
-                                "Content-Type": "application/x-www-form-urlencoded"
-                            },
-                            "body": {
-                                "value": "client_id=@{pipeline().parameters.ClientId}&scope=https%3A%2F%2Fmanagement.azure.com%2F.default&client_secret=@{activity('GetClientSecret').output.value}&grant_type=client_credentials",
-                                "type": "Expression"
-                            }
-                        }
-                    },
-                    {
                         "name": "GetUrl",
                         "description": "",
                         "type": "WebActivity",
-                        "dependsOn": [
-                            {
-                                "activity": "Login",
-                                "dependencyConditions": [
-                                    "Succeeded"
-                                ]
-                            }
-                        ],
+                        "dependsOn": [],
                         "policy": {
                             "timeout": "0.00:10:00",
                             "retry": 10,
@@ -3467,15 +3181,13 @@
                                 "type": "Expression"
                             },
                             "method": "POST",
-                            "headers": {
-                                "Authorization": {
-                                    "value": "Bearer @{activity('Login').output.access_token}",
-                                    "type": "Expression"
-                                }
-                            },
                             "body": {
                                 "value": "{\n  \"metric\": \"@{pipeline().parameters.Metric}\",\n  \"timePeriod\": {\n    \"start\": \"@{pipeline().parameters.UsageDate}\",\n    \"end\": \"@{pipeline().parameters.UsageDate}\"\n  }\n}",
                                 "type": "Expression"
+                            },
+                            "authentication": {
+                                "type": "MSI",
+                                "resource": "https://management.azure.com/"
                             }
                         }
                     },
@@ -3560,30 +3272,6 @@
                         ]
                     },
                     {
-                        "name": "GetClientSecret",
-                        "type": "WebActivity",
-                        "dependsOn": [],
-                        "policy": {
-                            "timeout": "0.00:10:00",
-                            "retry": 0,
-                            "retryIntervalInSeconds": 30,
-                            "secureOutput": true,
-                            "secureInput": true
-                        },
-                        "userProperties": [],
-                        "typeProperties": {
-                            "url": {
-                                "value": "@pipeline().parameters.ClientSecret",
-                                "type": "Expression"
-                            },
-                            "method": "GET",
-                            "authentication": {
-                                "type": "MSI",
-                                "resource": "https://vault.azure.net"
-                            }
-                        }
-                    },
-                    {
                         "name": "DeleteFile",
                         "type": "Delete",
                         "dependsOn": [
@@ -3665,21 +3353,9 @@
                     }
                 ],
                 "parameters": {
-                    "TenantId": {
-                        "type": "string",
-                        "defaultValue": "[parameters('ServicePrincipalTenantId')]"
-                    },
-                    "ClientId": {
-                        "type": "string",
-                        "defaultValue": "[parameters('ServicePrincipalId')]"
-                    },
                     "EnrollmentId": {
                         "type": "string",
                         "defaultValue": "[parameters('EnrollmentId')]"
-                    },
-                    "ClientSecret": {
-                        "type": "string",
-                        "defaultValue": "[variables('keyvaultSecretUri')]"
                     },
                     "UsageDate": {
                         "type": "string",
@@ -3695,8 +3371,7 @@
             "dependsOn": [
                 "[concat(variables('dataFactoryId'), '/datasets/ccmreportstorage')]",
                 "[concat(variables('dataFactoryId'), '/datasets/ccmdatalake_csv')]",
-                "[concat(variables('dataFactoryId'), '/datasets/ccmdatalake_gz')]",
-                "[concat(variables('dataFactoryId'), '/linkedServices/ccmkeyvault')]"
+                "[concat(variables('dataFactoryId'), '/datasets/ccmdatalake_gz')]"
             ]
         },
         {
@@ -3707,51 +3382,10 @@
                 "description": "Downloads a day's worth of usage data - Actual or Amortized per the parameter",
                 "activities": [
                     {
-                        "name": "Login",
-                        "type": "WebActivity",
-                        "dependsOn": [
-                            {
-                                "activity": "GetClientSecret",
-                                "dependencyConditions": [
-                                    "Succeeded"
-                                ]
-                            }
-                        ],
-                        "policy": {
-                            "timeout": "0.00:10:00",
-                            "retry": 0,
-                            "retryIntervalInSeconds": 30,
-                            "secureOutput": true,
-                            "secureInput": true
-                        },
-                        "userProperties": [],
-                        "typeProperties": {
-                            "url": {
-                                "value": "https://login.microsoftonline.com/@{pipeline().parameters.TenantId}/oauth2/v2.0/token",
-                                "type": "Expression"
-                            },
-                            "method": "POST",
-                            "headers": {
-                                "Content-Type": "application/x-www-form-urlencoded"
-                            },
-                            "body": {
-                                "value": "client_id=@{pipeline().parameters.ClientId}&scope=https%3A%2F%2Fmanagement.azure.com%2F.default&client_secret=@{activity('GetClientSecret').output.value}&grant_type=client_credentials",
-                                "type": "Expression"
-                            }
-                        }
-                    },
-                    {
                         "name": "GetUrl",
                         "description": "",
                         "type": "WebActivity",
-                        "dependsOn": [
-                            {
-                                "activity": "Login",
-                                "dependencyConditions": [
-                                    "Succeeded"
-                                ]
-                            }
-                        ],
+                        "dependsOn": [],
                         "policy": {
                             "timeout": "0.00:10:00",
                             "retry": 10,
@@ -3766,13 +3400,11 @@
                                 "type": "Expression"
                             },
                             "method": "POST",
-                            "headers": {
-                                "Authorization": {
-                                    "value": "Bearer @{activity('Login').output.access_token}",
-                                    "type": "Expression"
-                                }
-                            },
-                            "body": " "
+                            "body": " ",
+                            "authentication": {
+                                "type": "MSI",
+                                "resource": "https://management.azure.com/"
+                            }
                         }
                     },
                     {
@@ -3856,30 +3488,6 @@
                         ]
                     },
                     {
-                        "name": "GetClientSecret",
-                        "type": "WebActivity",
-                        "dependsOn": [],
-                        "policy": {
-                            "timeout": "0.00:10:00",
-                            "retry": 0,
-                            "retryIntervalInSeconds": 30,
-                            "secureOutput": true,
-                            "secureInput": true
-                        },
-                        "userProperties": [],
-                        "typeProperties": {
-                            "url": {
-                                "value": "@pipeline().parameters.ClientSecret",
-                                "type": "Expression"
-                            },
-                            "method": "GET",
-                            "authentication": {
-                                "type": "MSI",
-                                "resource": "https://vault.azure.net"
-                            }
-                        }
-                    },
-                    {
                         "name": "DeleteFile",
                         "type": "Delete",
                         "dependsOn": [
@@ -3961,21 +3569,9 @@
                     }
                 ],
                 "parameters": {
-                    "TenantId": {
-                        "type": "string",
-                        "defaultValue": "[parameters('ServicePrincipalTenantId')]"
-                    },
-                    "ClientId": {
-                        "type": "string",
-                        "defaultValue": "[parameters('ServicePrincipalId')]"
-                    },
                     "EnrollmentId": {
                         "type": "string",
                         "defaultValue": "[parameters('EnrollmentId')]"
-                    },
-                    "ClientSecret": {
-                        "type": "string",
-                        "defaultValue": "[variables('keyvaultSecretUri')]"
                     },
                     "UsageDate": {
                         "type": "string",
@@ -3987,8 +3583,7 @@
             "dependsOn": [
                 "[concat(variables('dataFactoryId'), '/datasets/ccmreportstorage')]",
                 "[concat(variables('dataFactoryId'), '/datasets/ccmdatalake_csv')]",
-                "[concat(variables('dataFactoryId'), '/datasets/ccmdatalake_gz')]",
-                "[concat(variables('dataFactoryId'), '/linkedServices/ccmkeyvault')]"
+                "[concat(variables('dataFactoryId'), '/datasets/ccmdatalake_gz')]"
             ]
         },
         {
@@ -4152,24 +3747,12 @@
                                         },
                                         "waitOnCompletion": true,
                                         "parameters": {
-                                            "TenantId": {
-                                                "value": "@pipeline().parameters.TenantId",
-                                                "type": "Expression"
-                                            },
-                                            "ClientId": {
-                                                "value": "@pipeline().parameters.ClientId",
-                                                "type": "Expression"
-                                            },
                                             "EnrollmentId": {
                                                 "value": "@pipeline().parameters.EnrollmentId",
                                                 "type": "Expression"
                                             },
                                             "UsageDate": {
                                                 "value": "@item()",
-                                                "type": "Expression"
-                                            },
-                                            "ClientSecret": {
-                                                "value": "@pipeline().parameters.ClientSecret",
                                                 "type": "Expression"
                                             },
                                             "Metric": "actualcost"
@@ -4195,24 +3778,12 @@
                                         },
                                         "waitOnCompletion": true,
                                         "parameters": {
-                                            "TenantId": {
-                                                "value": "@pipeline().parameters.TenantId",
-                                                "type": "Expression"
-                                            },
-                                            "ClientId": {
-                                                "value": "@pipeline().parameters.ClientId",
-                                                "type": "Expression"
-                                            },
                                             "EnrollmentId": {
                                                 "value": "@pipeline().parameters.EnrollmentId",
                                                 "type": "Expression"
                                             },
                                             "UsageDate": {
                                                 "value": "@item()",
-                                                "type": "Expression"
-                                            },
-                                            "ClientSecret": {
-                                                "value": "@pipeline().parameters.ClientSecret",
                                                 "type": "Expression"
                                             },
                                             "Metric": "amortizedcost"
@@ -4300,24 +3871,12 @@
                                         },
                                         "waitOnCompletion": true,
                                         "parameters": {
-                                            "TenantId": {
-                                                "value": "@pipeline().parameters.TenantId",
-                                                "type": "Expression"
-                                            },
-                                            "ClientId": {
-                                                "value": "@pipeline().parameters.ClientId",
-                                                "type": "Expression"
-                                            },
                                             "EnrollmentId": {
                                                 "value": "@pipeline().parameters.EnrollmentId",
                                                 "type": "Expression"
                                             },
                                             "UsageDate": {
                                                 "value": "@item()",
-                                                "type": "Expression"
-                                            },
-                                            "ClientSecret": {
-                                                "value": "@pipeline().parameters.ClientSecret",
                                                 "type": "Expression"
                                             }
                                         }
@@ -4407,24 +3966,12 @@
                             },
                             "waitOnCompletion": true,
                             "parameters": {
-                                "TenantId": {
-                                    "value": "@pipeline().parameters.TenantId",
-                                    "type": "Expression"
-                                },
-                                "ClientId": {
-                                    "value": "@pipeline().parameters.ClientId",
-                                    "type": "Expression"
-                                },
                                 "EnrollmentId": {
                                     "value": "@pipeline().parameters.EnrollmentId",
                                     "type": "Expression"
                                 },
                                 "UsageDate": {
                                     "value": "@variables('UsageEndDate')",
-                                    "type": "Expression"
-                                },
-                                "ClientSecret": {
-                                    "value": "@pipeline().parameters.ClientSecret",
                                     "type": "Expression"
                                 }
                             }
@@ -4433,21 +3980,9 @@
                 ],
                 "concurrency": 1,
                 "parameters": {
-                    "TenantId": {
-                        "type": "string",
-                        "defaultValue": "[parameters('ServicePrincipalTenantId')]"
-                    },
-                    "ClientId": {
-                        "type": "string",
-                        "defaultValue": "[parameters('ServicePrincipalId')]"
-                    },
                     "EnrollmentId": {
                         "type": "string",
                         "defaultValue": "[parameters('EnrollmentId')]"
-                    },
-                    "ClientSecret": {
-                        "type": "string",
-                        "defaultValue": "[variables('keyvaultSecretUri')]"
                     }
                 },
                 "variables": {
@@ -4633,24 +4168,12 @@
                                         },
                                         "waitOnCompletion": true,
                                         "parameters": {
-                                            "TenantId": {
-                                                "value": "@pipeline().parameters.TenantId",
-                                                "type": "Expression"
-                                            },
-                                            "ClientId": {
-                                                "value": "@pipeline().parameters.ClientId",
-                                                "type": "Expression"
-                                            },
                                             "EnrollmentId": {
                                                 "value": "@pipeline().parameters.EnrollmentId",
                                                 "type": "Expression"
                                             },
                                             "UsageDate": {
                                                 "value": "@item()",
-                                                "type": "Expression"
-                                            },
-                                            "ClientSecret": {
-                                                "value": "@pipeline().parameters.ClientSecret",
                                                 "type": "Expression"
                                             },
                                             "Metric": "actualcost"
@@ -4676,24 +4199,12 @@
                                         },
                                         "waitOnCompletion": true,
                                         "parameters": {
-                                            "TenantId": {
-                                                "value": "@pipeline().parameters.TenantId",
-                                                "type": "Expression"
-                                            },
-                                            "ClientId": {
-                                                "value": "@pipeline().parameters.ClientId",
-                                                "type": "Expression"
-                                            },
                                             "EnrollmentId": {
                                                 "value": "@pipeline().parameters.EnrollmentId",
                                                 "type": "Expression"
                                             },
                                             "UsageDate": {
                                                 "value": "@item()",
-                                                "type": "Expression"
-                                            },
-                                            "ClientSecret": {
-                                                "value": "@pipeline().parameters.ClientSecret",
                                                 "type": "Expression"
                                             },
                                             "Metric": "amortizedcost"
@@ -4781,24 +4292,12 @@
                                         },
                                         "waitOnCompletion": true,
                                         "parameters": {
-                                            "TenantId": {
-                                                "value": "@pipeline().parameters.TenantId",
-                                                "type": "Expression"
-                                            },
-                                            "ClientId": {
-                                                "value": "@pipeline().parameters.ClientId",
-                                                "type": "Expression"
-                                            },
                                             "EnrollmentId": {
                                                 "value": "@pipeline().parameters.EnrollmentId",
                                                 "type": "Expression"
                                             },
                                             "UsageDate": {
                                                 "value": "@item()",
-                                                "type": "Expression"
-                                            },
-                                            "ClientSecret": {
-                                                "value": "@pipeline().parameters.ClientSecret",
                                                 "type": "Expression"
                                             }
                                         }
@@ -4810,21 +4309,9 @@
                 ],
                 "concurrency": 1,
                 "parameters": {
-                    "TenantId": {
-                        "type": "string",
-                        "defaultValue": "[parameters('ServicePrincipalTenantId')]"
-                    },
-                    "ClientId": {
-                        "type": "string",
-                        "defaultValue": "[parameters('ServicePrincipalId')]"
-                    },
                     "EnrollmentId": {
                         "type": "string",
                         "defaultValue": "[parameters('EnrollmentId')]"
-                    },
-                    "ClientSecret": {
-                        "type": "string",
-                        "defaultValue": "[variables('keyvaultSecretUri')]"
                     },
                     "UsageStartDate": {
                         "type": "string",
