@@ -4390,5 +4390,11 @@
 
             ]
         }
-    ]
+    ],
+    "outputs": {
+        "datafactoryObjectId": {
+            "type": "string",
+            "value": "[reference(concat('Microsoft.DataFactory/factories/', parameters('DataFactoryName')), '2018-06-01', 'Full').identity.principalId]"
+        }
+    }
 }
