@@ -6,13 +6,7 @@ An example of how to use Azure Data Factory to retrieve usage data from the [Azu
 
 ## Deployment
 
-A [Service Principal](https://docs.microsoft.com/en-us/azure/cost-management-billing/manage/assign-roles-azure-service-principals#create-and-authenticate-your-service-principal) with [Enrollment Reader](https://docs.microsoft.com/en-us/azure/cost-management-billing/manage/assign-roles-azure-service-principals#permissions-that-can-be-assigned-to-the-spn) permissions assigned at the [Enrollment level](https://docs.microsoft.com/en-us/azure/cost-management-billing/manage/assign-roles-azure-service-principals#assign-enrollment-account-role-permission-to-the-spn) is required before deploying this example.
 
-### Create the Service Principal using the Azure Portal
-1. [Create and authenticate your service principal](https://docs.microsoft.com/en-us/azure/cost-management-billing/manage/assign-roles-azure-service-principals#create-and-authenticate-your-service-principal)
-2. [Assign enrollment account role permission to the SPN](https://docs.microsoft.com/en-us/azure/cost-management-billing/manage/assign-roles-azure-service-principals#assign-enrollment-account-role-permission-to-the-spn)
-
-Take note of the service principal's tenant ID, application ID and secret as they're required for the next step.
 The Enrollment ID variable can be obtained from from *Cost Management and Billing* in the [Azure Portal](https://portal.azure.com) or the [EA Portal](https://ea.azure.com)
 
 ### Paremeters
@@ -23,11 +17,7 @@ Aad Resource Id             | [parameters('managementApiUri')] | Same value as M
 Blob Container Name         | [concat('ccm', uniqueString(resourceGroup().id, resourceGroup().location))] | 
 Data Factory Name           | [concat('datafactory', uniqueString(resourceGroup().id, resourceGroup().location))] | 
 Enrollment Id               | **Required**| Obtained from Cost Management and Billing in the Azure Portal or the EA Portal
-Keyvault Name               | [concat('keyvault', uniqueString(resourceGroup().id, resourceGroup().location))] | 
 Management Api Uri          | https://management.azure.com | Modify to support different Azure clouds
-Service Principal Id        | **Required** | The Application ID of the service principal (not the object id)
-Service Principal Secret    | **Required** | The password for the service principal obtained during creation
-Service Principal Tenant Id | **Required** | The ID of Azure AD Tenant containing the service principal
 Storage Account Name        | [concat('storage', uniqueString(resourceGroup().id, resourceGroup().location))] | 
 
 
@@ -52,6 +42,12 @@ az deployment group create \
     --parameters @azuredeploy.parameters.json
 ```
 ## Post Deployment
+
+### Assign EnrollmentReader role to the Data Factory Managed Identity
+
+A [Managed Identity](https://docs.microsoft.com/en-us/azure/cost-management-billing/manage/assign-roles-azure-service-principals#create-and-authenticate-your-service-principal) with [Enrollment Reader](https://docs.microsoft.com/en-us/azure/cost-management-billing/manage/assign-roles-azure-service-principals#permissions-that-can-be-assigned-to-the-spn) permissions assigned at the [Enrollment level](https://docs.microsoft.com/en-us/azure/cost-management-billing/manage/assign-roles-azure-service-principals#assign-enrollment-account-role-permission-to-the-spn) is required after deploying this example.
+
+[Assign enrollment account role permission to the SPN](https://docs.microsoft.com/en-us/azure/cost-management-billing/manage/assign-roles-azure-service-principals#assign-enrollment-account-role-permission-to-the-spn)
 
 ### Initialize the dataset
 Initializing the dataset is a two-step process.
